@@ -8,9 +8,11 @@ import (
 	"github.com/shadowapex/godot-go/gdnative"
 
   "github.com/btcsuite/btcd/btcec"
+  "github.com/btcsuite/btcd/btcjson"
   "github.com/btcsuite/btcd/chaincfg"
   "github.com/btcsuite/btcd/chaincfg/chainhash"
   "github.com/btcsuite/btcd/wire"
+  "github.com/btcsuite/btcutil"
   "github.com/btcsuite/btcutil/hdkeychain"
 )
 
@@ -108,6 +110,19 @@ func nativeScriptInit() {
 		&gdnative.InstanceMethod{
 			Method:     signMessage,
 			MethodData: "sign_message",
+			FreeFunc:   func(methodData string) {},
+		},
+  )
+
+  gdnative.NativeScript.RegisterMethod(
+		"GoBtcSuite",
+		"verify_message",
+		&gdnative.MethodAttributes{
+			RPCType: gdnative.MethodRpcModeDisabled,
+		},
+		&gdnative.InstanceMethod{
+			Method:     verifyMessage,
+			MethodData: "verify_message",
 			FreeFunc:   func(methodData string) {},
 		},
   )
@@ -212,7 +227,7 @@ func genAddress(object gdnative.Object, methodData, userData string, numArgs int
 func signMessage(object gdnative.Object, methodData, userData string, numArgs int, args []gdnative.Variant) gdnative.Variant {
   instance := Instances[object.ID()]
   msg := string(args[0].AsString())
-  
+
   var buf bytes.Buffer
 	wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
 	wire.WriteVarString(&buf, 0, msg)
@@ -234,6 +249,94 @@ func signMessage(object gdnative.Object, methodData, userData string, numArgs in
 	ret := gdnative.NewVariantWithString(data)
 
 	return ret
+}
+
+func gdvstring(txt string) gdnative.Variant {
+  data := gdnative.NewStringWithWideString(txt)
+	ret := gdnative.NewVariantWithString(data)
+  return ret
+}
+
+func decodeAddress(s string, params *chaincfg.Params) (btcutil.Address, error) {
+	addr, err := btcutil.DecodeAddress(s, params)
+	if err != nil {
+		msg := fmt.Sprintf("Invalid address %q: decode failed with %#q", s, err)
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInvalidAddressOrKey,
+			Message: msg,
+		}
+	}
+	if !addr.IsForNet(params) {
+		msg := fmt.Sprintf("Invalid address %q: not intended for use on %s",
+			addr, params.Name)
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInvalidAddressOrKey,
+			Message: msg,
+		}
+	}
+	return addr, nil
+}
+
+func verifyMessage(object gdnative.Object, methodData, userData string, numArgs int, args []gdnative.Variant) gdnative.Variant {
+  instance := Instances[object.ID()]
+
+  addrstr := string(args[0].AsString())
+  msg := string(args[1].AsString())
+  signature := string(args[2].AsString())
+
+  addr, err := decodeAddress(addrstr, instance.network)
+	if err != nil {
+    gdnative.Log.Warning("Invalid address!")
+    gdnative.Log.Warning(err)
+		//return gdnative.NewVariantBool(false)
+    return gdvstring("Invalid address")
+	}
+
+	// decode base64 signature
+	sig, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+    gdnative.Log.Warning("Invalid signature!")
+    gdnative.Log.Warning(err)
+		//return gdnative.NewVariantBool(false)
+    return gdvstring("Invalid signature: " + signature + " | " + fmt.Sprint(err))
+	}
+
+	// Validate the signature - this just shows that it was valid at all.
+	// we will compare it with the key next.
+	var buf bytes.Buffer
+	wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
+	wire.WriteVarString(&buf, 0, msg)
+	expectedMessageHash := chainhash.DoubleHashB(buf.Bytes())
+	pk, wasCompressed, err := btcec.RecoverCompact(btcec.S256(), sig,
+		expectedMessageHash)
+	if err != nil {
+    gdnative.Log.Warning("Invalid hash!")
+    gdnative.Log.Warning(err)
+		//return gdnative.NewVariantBool(false)
+    return gdvstring("Invalid hash")
+	}
+
+	var serializedPubKey []byte
+	if wasCompressed {
+		serializedPubKey = pk.SerializeCompressed()
+	} else {
+		serializedPubKey = pk.SerializeUncompressed()
+	}
+	// Verify that the signed-by address matches the given address
+	switch checkAddr := addr.(type) {
+	case *btcutil.AddressPubKeyHash: // ok
+    cmp := bytes.Equal(btcutil.Hash160(serializedPubKey), checkAddr.Hash160()[:])
+    gdnative.Log.Warning(cmp)
+		return gdnative.NewVariantBool(gdnative.Bool(cmp))
+	case *btcutil.AddressPubKey: // ok
+    cmp := string(serializedPubKey) == checkAddr.String()
+		return gdnative.NewVariantBool(gdnative.Bool(cmp))
+	default:
+    gdnative.Log.Warning("Invalid address type!")
+		//return gdnative.NewVariantBool(false)
+    return gdvstring("Invalid address type")
+  }
+
 }
 
 func main() {
