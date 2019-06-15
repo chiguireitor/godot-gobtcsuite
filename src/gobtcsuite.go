@@ -280,25 +280,26 @@ func decodeAddress(s string, params *chaincfg.Params) (btcutil.Address, error) {
 func verifyMessage(object gdnative.Object, methodData, userData string, numArgs int, args []gdnative.Variant) gdnative.Variant {
   instance := Instances[object.ID()]
 
-  addrstr := string(args[0].AsString())
-  msg := string(args[1].AsString())
-  signature := string(args[2].AsString())
+  params_dict := args[0].AsDictionary()
+
+  addrstr_v := params_dict.Get(gdvstring("addr"))
+  addrstr := string(addrstr_v.AsString())
+  msg_v := params_dict.Get(gdvstring("msg"))
+  msg := string(msg_v.AsString())
+  signature_v := params_dict.Get(gdvstring("signature"))
+  signature := string(signature_v.AsString())
 
   addr, err := decodeAddress(addrstr, instance.network)
 	if err != nil {
     gdnative.Log.Warning("Invalid address!")
-    gdnative.Log.Warning(err)
-		//return gdnative.NewVariantBool(false)
-    return gdvstring("Invalid address")
+		return gdnative.NewVariantBool(false)
 	}
 
 	// decode base64 signature
 	sig, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
     gdnative.Log.Warning("Invalid signature!")
-    gdnative.Log.Warning(err)
-		//return gdnative.NewVariantBool(false)
-    return gdvstring("Invalid signature: " + signature + " | " + fmt.Sprint(err))
+		return gdnative.NewVariantBool(false)
 	}
 
 	// Validate the signature - this just shows that it was valid at all.
@@ -311,9 +312,7 @@ func verifyMessage(object gdnative.Object, methodData, userData string, numArgs 
 		expectedMessageHash)
 	if err != nil {
     gdnative.Log.Warning("Invalid hash!")
-    gdnative.Log.Warning(err)
-		//return gdnative.NewVariantBool(false)
-    return gdvstring("Invalid hash")
+		return gdnative.NewVariantBool(false)
 	}
 
 	var serializedPubKey []byte
@@ -326,15 +325,12 @@ func verifyMessage(object gdnative.Object, methodData, userData string, numArgs 
 	switch checkAddr := addr.(type) {
 	case *btcutil.AddressPubKeyHash: // ok
     cmp := bytes.Equal(btcutil.Hash160(serializedPubKey), checkAddr.Hash160()[:])
-    gdnative.Log.Warning(cmp)
 		return gdnative.NewVariantBool(gdnative.Bool(cmp))
 	case *btcutil.AddressPubKey: // ok
     cmp := string(serializedPubKey) == checkAddr.String()
 		return gdnative.NewVariantBool(gdnative.Bool(cmp))
 	default:
-    gdnative.Log.Warning("Invalid address type!")
-		//return gdnative.NewVariantBool(false)
-    return gdvstring("Invalid address type")
+		return gdnative.NewVariantBool(false)
   }
 
 }
